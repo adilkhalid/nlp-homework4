@@ -149,7 +149,7 @@ if __name__ == "__main__":
     elif args.mode == "always_entail":
         fact_checker = AlwaysEntailedFactChecker()
     elif args.mode == "word_overlap":
-        fact_checker = WordRecallThresholdFactChecker(all_facts=all_facts, all_passages=all_passages)
+        fact_checker = WordRecallThresholdFactChecker()
     elif args.mode == "parsing":
         fact_checker = DependencyRecallThresholdFactChecker()
     elif args.mode == "entailment":

@@ -22,7 +22,7 @@ import re
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from spacy.lang.ja.syntax_iterators import labels
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 
 try:
     nlp = spacy.load('en_core_web_sm')
@@ -140,85 +140,66 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import spacy
 from nltk.corpus import stopwords
-class WordRecallThresholdFactChecker(FactChecker):
-    def __init__(self, threshold=0.1, alpha=0.3, beta=0.3, model_name='bert-base-uncased', all_facts=None, all_passages=None):
+from itertools import chain, tee
+
+
+class WordRecallThresholdFactChecker:
+    def __init__(self, threshold=0.5, include_bigrams=True):
         """
         :param threshold: The similarity score threshold for classification
-        :param alpha: Weighting factor for combining cosine and Jaccard similarity
-        :param beta: Weight for incorporating BLEU score
-        :param model_name: Name of the pre-trained BERT model to use
+        :param include_bigrams: If True, includes bigrams in tokenization for more context
         """
         self.threshold = threshold
-        self.alpha = alpha
-        self.beta = beta
-        self.nlp = spacy.load('en_core_web_sm')
+        self.include_bigrams = include_bigrams
 
-        # Load BERT tokenizer and model
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+    def preprocess_text(self, text):
+        """
+        Preprocesses the text by:
+        - Converting to lowercase
+        - Removing punctuation
+        - Stripping extra whitespace
+        - Tokenizing words
+        - Optionally adding bigrams
+        """
+        # Convert to lowercase
+        text = text.lower()
 
-        # Ensure all_facts and all_passages are provided for building the vocabulary
-        if all_facts is not None and all_passages is not None:
-            flat_passages = [text for sublist in all_passages for text in sublist]
-            self.build_vocabulary(all_facts, flat_passages)
-        else:
-            raise ValueError("all_facts and all_passages must be provided to build vocabulary")
+        # Remove punctuation
+        text = re.sub(r'[^\w\s]', '', text)
 
-    def custom_tokenizer(self, text):
-        doc = self.nlp(text.lower())
-        tokens = [token.lemma_ for token in doc if not token.is_punct and not token.is_stop]
+        # Tokenize words
+        tokens = text.split()
+
+        # Optionally add bigrams to tokens list
+        if self.include_bigrams and len(tokens) > 1:
+            bigrams = [f"{tokens[i]}_{tokens[i + 1]}" for i in range(len(tokens) - 1)]
+            tokens.extend(bigrams)
+
         return tokens
 
-    def build_vocabulary(self, all_facts, flat_passages):
-        # Vocabulary is not needed for BERT-based embeddings but can be implemented if necessary
-        pass
-
-    def compute_bert_embedding(self, text):
-        inputs = self.tokenizer(text, return_tensors='pt', truncation=True, padding=True)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        # Use the mean of the last hidden state as the embedding
-        return outputs.last_hidden_state.mean(dim=1)
-
     def compute_overlap_score(self, fact, passage):
-        # Generate embeddings for fact and passage
-        fact_embedding = self.compute_bert_embedding(fact)
-        passage_embedding = self.compute_bert_embedding(passage)
-        # Cosine similarity between the embeddings
-        return cosine_similarity(fact_embedding, passage_embedding)[0][0]
+        # Preprocess and tokenize both fact and passage
+        fact_tokens = set(self.preprocess_text(fact))
+        passage_tokens = set(self.preprocess_text(passage))
 
-    def compute_jaccard_similarity(self, fact, passage):
-        # Jaccard similarity using token sets
-        fact_tokens = set(self.custom_tokenizer(fact))
-        passage_tokens = set(self.custom_tokenizer(passage))
-        intersection = fact_tokens.intersection(passage_tokens)
-        union = fact_tokens.union(passage_tokens)
-        return len(intersection) / len(union) if union else 0
+        # Avoid division by zero if tokens are empty
+        if not fact_tokens or not passage_tokens:
+            return 0
 
-    def compute_bleu_score(self, fact, passage):
-        # BLEU score calculation with smoothing
-        fact_tokens = self.custom_tokenizer(fact)
-        passage_tokens = self.custom_tokenizer(passage)
-        smoothing_function = SmoothingFunction().method1  # Choose the appropriate smoothing method
-        return sentence_bleu([passage_tokens], fact_tokens, smoothing_function=smoothing_function)
+        # Szymkiewicz–Simpson (Overlap) Coefficient
+        return len(fact_tokens.intersection(passage_tokens)) / min(len(fact_tokens), len(passage_tokens))
 
     def predict(self, fact, passages):
-        max_score = 0
+        max_overlap_score = 0
 
         for passage in passages:
             passage_text = passage['text']
+            # Calculate overlap score for each passage
+            overlap_score = self.compute_overlap_score(fact, passage_text)
+            max_overlap_score = max(max_overlap_score, overlap_score)
 
-            # Calculate each similarity score
-            cosine_score = self.compute_overlap_score(fact, passage_text)
-            jaccard_score = self.compute_jaccard_similarity(fact, passage_text)
-            bleu_score = self.compute_bleu_score(fact, passage_text)
-
-            # Combined hybrid score with weighted components
-            hybrid_score = (self.alpha * cosine_score + (1 - self.alpha) * jaccard_score) * (1 + self.beta * bleu_score)
-            max_score = max(max_score, hybrid_score)
-
-        # Classify based on threshold
-        return "S" if max_score >= self.threshold else "NS"
+        # Classify based on overlap score threshold
+        return "S" if max_overlap_score >= self.threshold else "NS"
 
 class EntailmentFactChecker(object):
     def __init__(self, ent_model):
