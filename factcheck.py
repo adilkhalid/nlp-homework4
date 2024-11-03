@@ -7,8 +7,7 @@ import spacy
 import gc
 
 import re
-
-from nltk import PorterStemmer
+from nltk import PorterStemmer, sent_tokenize
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -54,30 +53,85 @@ class FactExample:
         return repr("fact=" + repr(self.fact) + "; label=" + repr(self.label) + "; passages=" + repr(self.passages))
 
 
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from typing import List
+import re
+import gc
+
+
 class EntailmentModel:
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer
 
-    def check_entailment(self, premise: str, hypothesis: str):
+    def check_entailment(self, premise: str, hypothesis: str) -> float:
         with torch.no_grad():
             # Tokenize the premise and hypothesis
             inputs = self.tokenizer(premise, hypothesis, return_tensors='pt', truncation=True, padding=True)
             # Get the model's prediction
             outputs = self.model(**inputs)
             logits = outputs.logits
+            # Apply softmax to get probabilities for entailment, neutral, and contradiction
+            probs = torch.softmax(logits, dim=-1).squeeze().tolist()
 
-        # Note that the labels are ["entailment", "neutral", "contradiction"]. There are a number of ways to map
-        # these logits or probabilities to classification decisions; you'll have to decide how you want to do this.
+        # Return the probability of the "entailment" class
+        entailment_prob = probs[0]  # Assuming "entailment" is at index 0
+        return entailment_prob
 
-        raise Exception("Not implemented")
-
-        # To prevent out-of-memory (OOM) issues during autograding, we explicitly delete
-        # objects inputs, outputs, logits, and any results that are no longer needed after the computation.
-        del inputs, outputs, logits
+    def cleanup(self):
+        # Explicitly delete large objects to save memory
+        del self.model
+        del self.tokenizer
         gc.collect()
 
-        # return something
+
+class EntailmentFactChecker:
+    def __init__(self, ent_model: EntailmentModel, entailment_threshold: float = 0.8, overlap_threshold: float = 0.2):
+        """
+        :param ent_model: The entailment model for checking entailment
+        :param entailment_threshold: Threshold to classify entailment probability as supported
+        :param overlap_threshold: Optional word overlap threshold to filter unlikely passages
+        """
+        self.ent_model = ent_model
+        self.entailment_threshold = entailment_threshold
+        self.overlap_threshold = overlap_threshold
+
+    def preprocess_text(self, text: str) -> List[str]:
+        """
+        Splits text into sentences and performs basic cleaning.
+        """
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        return [sentence.strip() for sentence in sentences if sentence.strip()]
+
+    def word_overlap(self, fact: str, passage: str) -> float:
+        """
+        Computes word overlap as a rough filter to avoid processing irrelevant passages.
+        """
+        fact_tokens = set(fact.lower().split())
+        passage_tokens = set(passage.lower().split())
+        overlap = len(fact_tokens.intersection(passage_tokens)) / len(fact_tokens)
+        return overlap
+
+    def predict(self, fact: str, passages: List[dict]) -> str:
+        max_entailment_score = 0
+
+        # Loop over all passages
+        for passage in passages:
+            passage_text = passage['text']
+            sentences = self.preprocess_text(passage_text)
+
+            # Prune passages with low word overlap
+            if self.word_overlap(fact, passage_text) < self.overlap_threshold:
+                continue
+
+            # Check each sentence in the passage
+            for sentence in sentences:
+                entailment_prob = self.ent_model.check_entailment(sentence, fact)
+                max_entailment_score = max(max_entailment_score, entailment_prob)
+
+        # Decide supported vs. not supported based on the highest entailment score
+        return "S" if max_entailment_score >= self.entailment_threshold else "NS"
 
 
 class FactChecker(object):
@@ -119,7 +173,6 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import spacy
 
-
 import torch
 from typing import List
 import numpy as np
@@ -144,69 +197,64 @@ from itertools import chain, tee
 
 
 class WordRecallThresholdFactChecker:
-    def __init__(self, threshold=0.5, include_bigrams=True):
+    def __init__(self, threshold=0.5, bigram_weight=.5):
         """
         :param threshold: The similarity score threshold for classification
-        :param include_bigrams: If True, includes bigrams in tokenization for more context
+        :param bigram_weight: Weight applied to bigram overlap to increase its influence
         """
         self.threshold = threshold
-        self.include_bigrams = include_bigrams
+        self.bigram_weight = bigram_weight
 
     def preprocess_text(self, text):
         """
         Preprocesses the text by:
         - Converting to lowercase
         - Removing punctuation
-        - Stripping extra whitespace
         - Tokenizing words
-        - Optionally adding bigrams
+        - Adding bigrams for more context
         """
-        # Convert to lowercase
-        text = text.lower()
-
-        # Remove punctuation
-        text = re.sub(r'[^\w\s]', '', text)
+        # Convert to lowercase and remove punctuation
+        text = re.sub(r'[^\w\s]', '', text.lower())
 
         # Tokenize words
         tokens = text.split()
 
-        # Optionally add bigrams to tokens list
-        if self.include_bigrams and len(tokens) > 1:
-            bigrams = [f"{tokens[i]}_{tokens[i + 1]}" for i in range(len(tokens) - 1)]
-            tokens.extend(bigrams)
+        # Generate bigrams for additional context
+        bigrams = [f"{tokens[i]}_{tokens[i + 1]}" for i in range(len(tokens) - 1)]
 
-        return tokens
+        # Return both unigrams and bigrams
+        return tokens + bigrams
 
     def compute_overlap_score(self, fact, passage):
         # Preprocess and tokenize both fact and passage
         fact_tokens = set(self.preprocess_text(fact))
         passage_tokens = set(self.preprocess_text(passage))
 
-        # Avoid division by zero if tokens are empty
-        if not fact_tokens or not passage_tokens:
-            return 0
+        # Separate unigrams and bigrams for custom weighting
+        fact_unigrams = {token for token in fact_tokens if "_" not in token}
+        fact_bigrams = fact_tokens - fact_unigrams
+        passage_unigrams = {token for token in passage_tokens if "_" not in token}
+        passage_bigrams = passage_tokens - passage_unigrams
 
-        # Szymkiewicz–Simpson (Overlap) Coefficient
-        return len(fact_tokens.intersection(passage_tokens)) / min(len(fact_tokens), len(passage_tokens))
+        # Calculate overlap scores with separate weights
+        unigram_overlap = len(fact_unigrams.intersection(passage_unigrams)) / min(len(fact_unigrams),
+                                                                                  len(passage_unigrams)) if fact_unigrams and passage_unigrams else 0
+        bigram_overlap = len(fact_bigrams.intersection(passage_bigrams)) / min(len(fact_bigrams),
+                                                                               len(passage_bigrams)) if fact_bigrams and passage_bigrams else 0
+
+        # Combined score using bigram weight
+        combined_score = (unigram_overlap + self.bigram_weight * bigram_overlap) / (1 + self.bigram_weight)
+        return combined_score
 
     def predict(self, fact, passages):
         max_overlap_score = 0
 
-        for passage in passages:
-            passage_text = passage['text']
-            # Calculate overlap score for each passage
-            overlap_score = self.compute_overlap_score(fact, passage_text)
-            max_overlap_score = max(max_overlap_score, overlap_score)
-
-        # Classify based on overlap score threshold
-        return "S" if max_overlap_score >= self.threshold else "NS"
-
-class EntailmentFactChecker(object):
-    def __init__(self, ent_model):
-        self.ent_model = ent_model
-
-    def predict(self, fact: str, passages: List[dict]) -> str:
-        raise Exception("Implement me")
+        if isinstance(passages, list):  # Handle multiple passages
+            max_overlap_score = max(self.compute_overlap_score(fact, passage['text']) for passage in passages)
+            return "S" if max_overlap_score >= self.threshold else "NS"
+        else:  # Handle single passage text
+            overlap_score = self.compute_overlap_score(fact, passages)
+            return overlap_score >= self.threshold
 
 
 # OPTIONAL

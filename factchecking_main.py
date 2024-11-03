@@ -133,13 +133,6 @@ if __name__ == "__main__":
     for example in examples:
         print(example.fact + ": " + repr([len(p["text"]) for p in example.passages]))
 
-        # Collect all facts and passages for building the vocabulary
-    global all_facts, all_passages
-    all_facts = [example.fact for example in examples]
-    all_passages = [  # Restructure to be a list of lists
-        [passage['text'] for passage in example.passages] for example in examples
-    ]
-
     assert args.mode in ['random', 'always_entail', 'word_overlap', 'parsing', 'entailment'], "invalid method"
     print(f"Method: {args.mode}")
 
