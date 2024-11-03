@@ -1,0 +1,11 @@
+numpy~=2.0.2
+torch~=2.5.1
+tqdm~=4.66.6
+spacy~=3.8.2
+nltk
+torchvision
+transformers~=4.46.1
+sentencepiece
+protobuf
+
+scikit-learn~=1.5.2
