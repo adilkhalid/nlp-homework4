@@ -147,10 +147,12 @@ if __name__ == "__main__":
         fact_checker = DependencyRecallThresholdFactChecker()
     elif args.mode == "entailment":
         model_name = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
-        # model_name = "roberta-large-mnli"   # alternative model that you can try out if you want
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         ent_tokenizer = AutoTokenizer.from_pretrained(model_name)
-        roberta_ent_model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        roberta_ent_model = AutoModelForSequenceClassification.from_pretrained(model_name).to(device)
         ent_model = EntailmentModel(roberta_ent_model, ent_tokenizer)
+        # Adjust thresholds as neededfEntailmentModel
         fact_checker = EntailmentFactChecker(ent_model)
     else:
         raise NotImplementedError

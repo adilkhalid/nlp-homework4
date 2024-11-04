@@ -59,24 +59,25 @@ from typing import List
 import re
 import gc
 
-
 class EntailmentModel:
     def __init__(self, model, tokenizer):
-        self.model = model
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = model.to(self.device)
         self.tokenizer = tokenizer
 
     def check_entailment(self, premise: str, hypothesis: str) -> float:
         with torch.no_grad():
             # Tokenize the premise and hypothesis
             inputs = self.tokenizer(premise, hypothesis, return_tensors='pt', truncation=True, padding=True)
+            # Move inputs to the same device as the model
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
             # Get the model's prediction
             outputs = self.model(**inputs)
             logits = outputs.logits
-            # Apply softmax to get probabilities for entailment, neutral, and contradiction
+            # Apply softmax to get probabilities
             probs = torch.softmax(logits, dim=-1).squeeze().tolist()
-
         # Return the probability of the "entailment" class
-        entailment_prob = probs[0]  # Assuming "entailment" is at index 0
+        entailment_prob = probs[0]  # Assuming 'entailment' is at index 0
         return entailment_prob
 
     def cleanup(self):
@@ -84,10 +85,13 @@ class EntailmentModel:
         del self.model
         del self.tokenizer
         gc.collect()
+        torch.cuda.empty_cache()
 
+import re
+from typing import List
 
 class EntailmentFactChecker:
-    def __init__(self, ent_model: EntailmentModel, entailment_threshold: float = 0.8, overlap_threshold: float = 0.2):
+    def __init__(self, ent_model: EntailmentModel, entailment_threshold: float = 0.6, overlap_threshold: float = 0.1):
         """
         :param ent_model: The entailment model for checking entailment
         :param entailment_threshold: Threshold to classify entailment probability as supported
@@ -110,7 +114,7 @@ class EntailmentFactChecker:
         """
         fact_tokens = set(fact.lower().split())
         passage_tokens = set(passage.lower().split())
-        overlap = len(fact_tokens.intersection(passage_tokens)) / len(fact_tokens)
+        overlap = len(fact_tokens.intersection(passage_tokens)) / len(fact_tokens) if len(fact_tokens) > 0 else 0
         return overlap
 
     def predict(self, fact: str, passages: List[dict]) -> str:
