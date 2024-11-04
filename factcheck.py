@@ -1,27 +1,13 @@
 # factcheck.py
 
+
 import torch
 from typing import List
 import numpy as np
 import spacy
 import gc
 
-import re
-from nltk import PorterStemmer, sent_tokenize
-from nltk.corpus import stopwords
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import spacy
-import torch
-from typing import List
-import numpy as np
-import spacy
-import gc
-import re
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from spacy.lang.ja.syntax_iterators import labels
-from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+
 
 try:
     nlp = spacy.load('en_core_web_sm')
@@ -51,13 +37,6 @@ class FactExample:
 
     def __repr__(self):
         return repr("fact=" + repr(self.fact) + "; label=" + repr(self.label) + "; passages=" + repr(self.passages))
-
-
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from typing import List
-import re
-import gc
 
 class EntailmentModel:
     def __init__(self, model, tokenizer):
@@ -164,41 +143,10 @@ class AlwaysEntailedFactChecker(object):
         return "S"
 
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-import spacy
-import numpy as np
-
-from sklearn.linear_model import LogisticRegression
-from nltk.translate.bleu_score import sentence_bleu
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import spacy
-
-import torch
-from typing import List
-import numpy as np
-import spacy
-import gc
-from sklearn.linear_model import LogisticRegression
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-
 
 class FactChecker:
     def predict(self, fact: str, passages: List[dict]) -> str:
         raise Exception("Don't call me, call my subclasses")
-
-
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import spacy
-from nltk.corpus import stopwords
-from itertools import chain, tee
-
 
 class WordRecallThresholdFactChecker:
     def __init__(self, threshold=0.5, bigram_weight=.5):
