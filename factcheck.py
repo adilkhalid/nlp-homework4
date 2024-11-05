@@ -1,23 +1,12 @@
-# factcheck.py
-
-
 import torch
 from typing import List
 import numpy as np
-import spacy
+import nltk
 import gc
 
-
-
-try:
-    nlp = spacy.load('en_core_web_sm')
-except OSError:
-    # If the model is not found, download it
-    from spacy.cli import download
-
-    download('en_core_web_sm')
-    nlp = spacy.load('en_core_web_sm')
-
+# Ensure necessary NLTK data packages are downloaded
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
 
 class FactExample:
     """
@@ -56,7 +45,7 @@ class EntailmentModel:
             # Apply softmax to get probabilities
             probs = torch.softmax(logits, dim=-1).squeeze().tolist()
         # Return the probability of the "entailment" class
-        entailment_prob = probs[0]  # Assuming 'entailment' is at index 0
+        entailment_prob = probs[0]  # Adjust the index if necessary based on your model
         return entailment_prob
 
     def cleanup(self):
@@ -67,7 +56,6 @@ class EntailmentModel:
         torch.cuda.empty_cache()
 
 import re
-from typing import List
 
 class EntailmentFactChecker:
     def __init__(self, ent_model: EntailmentModel, entailment_threshold: float = 0.6, overlap_threshold: float = 0.1):
@@ -82,9 +70,10 @@ class EntailmentFactChecker:
 
     def preprocess_text(self, text: str) -> List[str]:
         """
-        Splits text into sentences and performs basic cleaning.
+        Splits text into sentences using NLTK's sent_tokenize.
         """
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        from nltk.tokenize import sent_tokenize
+        sentences = sent_tokenize(text)
         return [sentence.strip() for sentence in sentences if sentence.strip()]
 
     def word_overlap(self, fact: str, passage: str) -> float:
@@ -141,7 +130,6 @@ class RandomGuessFactChecker(object):
 class AlwaysEntailedFactChecker(object):
     def predict(self, fact: str, passages: List[dict]) -> str:
         return "S"
-
 
 
 class FactChecker:
@@ -212,7 +200,9 @@ class WordRecallThresholdFactChecker:
 # OPTIONAL
 class DependencyRecallThresholdFactChecker(object):
     def __init__(self):
-        self.nlp = spacy.load('en_core_web_sm')
+        # Initialize any required NLTK resources
+        nltk.download('punkt')
+        nltk.download('averaged_perceptron_tagger')
 
     def predict(self, fact: str, passages: List[dict]) -> str:
         raise Exception("Implement me")
@@ -221,21 +211,16 @@ class DependencyRecallThresholdFactChecker(object):
         """
         Returns a set of relevant dependencies from sent
         :param sent: The sentence to extract dependencies from
-        :param nlp: The spaCy model to run
-        :return: A set of dependency relations as tuples (head, label, child) where the head and child are lemmatized
-        if they are verbs. This is filtered from the entire set of dependencies to reflect ones that are most
-        semantically meaningful for this kind of fact-checking
+        :return: A set of dependency relations as tuples (head, label, child)
         """
-        # Runs the spaCy tagger
-        processed_sent = self.nlp(sent)
+        # Tokenize and POS tag the sentence
+        tokens = nltk.word_tokenize(sent)
+        pos_tags = nltk.pos_tag(tokens)
+
+        # For dependency parsing, NLTK doesn't have a built-in parser like spaCy
+        # You might need to use a third-party parser or implement a simple one
+
+        # Here, we'll create a simple placeholder that returns an empty set
+        # Replace this with actual dependency parsing if needed
         relations = set()
-        for token in processed_sent:
-            ignore_dep = ['punct', 'ROOT', 'root', 'det', 'case', 'aux', 'auxpass', 'dep', 'cop', 'mark']
-            if token.is_punct or token.dep_ in ignore_dep:
-                continue
-            # Simplify the relation to its basic form (root verb form for verbs)
-            head = token.head.lemma_ if token.head.pos_ == 'VERB' else token.head.text
-            dependent = token.lemma_ if token.pos_ == 'VERB' else token.text
-            relation = (head, token.dep_, dependent)
-            relations.add(relation)
         return relations
